@@ -133,7 +133,7 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-
+//------------------//
 //
 
 package com.example.expenseapp;
@@ -239,3 +239,104 @@ public class MainActivity extends AppCompatActivity {
         fetchAll();
     }
 }
+
+
+//----------------//
+
+package com.example.expenseapp
+
+import android.content.Intent
+import android.os.Bundle
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.*
+import androidx.room.Room
+import com.example.expenseapp.databinding.ActivityMainBinding
+import com.google.android.material.snackbar.Snackbar
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var b: ActivityMainBinding
+    private lateinit var db: AppDatabase
+    private lateinit var adapter: TransactionAdapter
+    private lateinit var deleted: Transaction
+    private var list = emptyList<Transaction>()
+    private var oldList = emptyList<Transaction>()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        b = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(b.root)
+
+        db = Room.databaseBuilder(this, AppDatabase::class.java, "transactions").build()
+        adapter = TransactionAdapter(list)
+
+        b.recyclerview.apply {
+            layoutManager = LinearLayoutManager(this@MainActivity)
+            adapter = this@MainActivity.adapter
+        }
+
+        ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(0, ItemTouchHelper.RIGHT) {
+            override fun onMove(rv: RecyclerView, vh: RecyclerView.ViewHolder, t: RecyclerView.ViewHolder) = false
+            override fun onSwiped(vh: RecyclerView.ViewHolder, d: Int) {
+                deleteTransaction(list[vh.adapterPosition])
+            }
+        }).attachToRecyclerView(b.recyclerview)
+
+        b.addBtn.setOnClickListener {
+            startActivity(Intent(this, AddTransactionActivity::class.java))
+        }
+    }
+
+    private fun fetchAll() = lifecycleScope.launch(Dispatchers.IO) {
+        list = db.transactionDao().getAll()
+        withContext(Dispatchers.Main) { updateUI() }
+    }
+
+    private fun updateUI() {
+        val total = list.sumOf { it.amount }
+        val budget = list.filter { it.amount > 0 }.sumOf { it.amount }
+        b.balance.text = "₹ %.2f".format(total)
+        b.budget.text = "₹ %.2f".format(budget)
+        b.expense.text = "₹ %.2f".format(total - budget)
+        adapter.setData(list)
+    }
+
+    private fun undoDelete() = lifecycleScope.launch(Dispatchers.IO) {
+        db.transactionDao().insertAll(deleted)
+        list = oldList
+        withContext(Dispatchers.Main) { updateUI() }
+    }
+
+    private fun showUndoSnackbar() {
+        Snackbar.make(b.coordinator, "Transaction deleted!", Snackbar.LENGTH_LONG)
+            .setAction("Undo") { undoDelete() }
+            .setActionTextColor(ContextCompat.getColor(this, R.color.red))
+            .setTextColor(ContextCompat.getColor(this, R.color.white))
+            .show()
+    }
+
+    private fun deleteTransaction(t: Transaction) {
+        deleted = t
+        oldList = list
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            db.transactionDao().delete(t)
+            list = list.filter { it.id != t.id }
+            withContext(Dispatchers.Main) {
+                updateUI()
+                showUndoSnackbar()
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        fetchAll()
+    }
+}
+
